@@ -1,0 +1,8 @@
+{
+  "editor.formatOnSave": false,
+  "editor.defaultFormatter": null,
+  "eslint.validate": [],
+  "eslint.enable": false,
+  "prettier.enable": false,
+  "prettier.requireConfig": true
+}

@@ -1,0 +1,98 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"] // [新增] 必须开启此预览功能才能用 pgvector
+}
+
+datasource db {
+  provider = "postgresql" // 使用 PostgreSQL
+  extensions = [vector] // [新增] 激活 PostgreSQL 的向量扩展
+}
+
+// 用户表
+model User {
+  id        Int        @id @default(autoincrement())
+  email     String     @unique
+  password  String     // 存储加密后的密码
+  name      String?
+  documents Document[] // 关联文档
+  
+  // [新增] 用户现在拥有的不再是一堆散乱的消息，而是一个个“会话”(ChatSession)
+  sessions  ChatSession[] 
+  
+  // [保留] 如果你希望保留获取所有消息的能力，可以留着，但通常我们通过 session 去找消息
+  messages  Message[]  
+
+  createdAt DateTime   @default(now())
+}
+
+// 知识库文档表
+model Document {
+  id        Int      @id @default(autoincrement()) // 自增主键 ID
+  title     String   // 文件名 (例如: 报告.pdf)
+  type      String   // 文件类型 (例如: application/pdf)
+  size      String   // 文件大小 (例如: "2.4 MB")
+  url       String   // 文件在服务器上的本地存储路径 (例如: uploads/123.pdf)
+  status    String   @default("ready") // [新增] 解析状态，默认为 'ready'。如果是做 AI 向量化，可以设为 'processing'
+  userId    Int      // 关联的用户 ID
+  user      User     @relation(fields: [userId], references: [id]) // Prisma 的外键关联语法
+  createdAt DateTime @default(now()) // 上传时间，默认当前时间
+
+  chunks    Chunk[]  // [新增] 一对多关联：一个文档包含多个 Chunk
+}
+
+// [新增] 全新的 Chunk 表，用于存储文本切片和它们的向量表示
+model Chunk {
+  id         Int      @id @default(autoincrement())
+  content    String   // 切片后的纯文本内容
+  
+  // 关联 Document 表，onDelete: Cascade 表示删除文档时，自动删除其所有的 Chunk
+  documentId Int      
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  // [核心新增] 向量字段。1536 是 OpenAI 等主流模型的向量维度 (如果是 BGE 模型通常是 1024)
+  embedding  Unsupported("vector(2560)") 
+  
+  createdAt  DateTime @default(now())
+}
+
+// [新增] 聊天会话表 (ChatSession)
+// 为什么需要这个表？
+// 以前所有的消息都直接挂在 User 下，导致无法区分哪几句话是关于同一个话题的。
+// 新增会话表后，一个用户(User)对应多个会话(ChatSession)，一个会话(ChatSession)对应多条消息(Message)。
+model ChatSession {
+  id        Int       @id @default(autoincrement()) // 会话的唯一标识
+  title     String    @default("新对话") // 会话的标题，默认可以叫"新对话"，后续可以由AI自动总结
+  
+  // 关联到 User 表：标明这个会话属于哪个用户
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // 一对多关联：一个会话包含多条具体的聊天记录
+  messages  Message[]
+
+  createdAt DateTime  @default(now()) // 会话创建时间
+  updatedAt DateTime  @updatedAt      // 会话最后更新时间（当有新消息时可更新此字段，用于排序最新活跃的会话）
+}
+
+// 聊天记录表 (修改版)
+model Message {
+  id        Int      @id @default(autoincrement())
+  role      String   // 'user' 或 'ai'
+  content   String
+  
+  // 关联用户 (保留此关联可以方便统计用户总发言，或者删除用户时级联删除)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+
+  // [新增] 关联到具体的会话。这样我们就能根据 sessionId 查询某个特定对话的所有聊天记录了
+  // onDelete: Cascade 表示如果对应的 ChatSession 被删除了，该会话下的所有 Message 也自动删除，保持数据整洁。
+  sessionId Int
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
